@@ -1,3 +1,5 @@
 env/
 # inventory file
 inventory
+# log
+log/*.log
