@@ -1,5 +1,10 @@
+# .vscode
+.vscode/
 env/
 # inventory file
 inventory
 # log
 log/*.log
+# certificate and private key
+*.crt
+*.key
