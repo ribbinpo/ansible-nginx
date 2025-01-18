@@ -1,8 +1,13 @@
+# system files
+.DS_Store
+
 # .vscode
 .vscode/
 env/
 # inventory file
 inventory
+# host_vars
+host_vars/server01
 # log
 log/*.log
 # certificate and private key
