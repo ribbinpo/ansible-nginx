@@ -1,0 +1,161 @@
+- name: Start Nginx container for HTTPS with Let's Encrypt
+  hosts: all
+  become: yes
+  vars_prompt:
+    - name: ACCOUNT_EMAIL
+      prompt: "Enter your Let's Encrypt account email"
+      private: no
+      default: ""
+    - name: DOCKER_REGISTRY_URL
+      prompt: "Enter your Docker registry URL"
+      private: no
+      default: "swr.cn-east-3.myhuaweicloud.com/library"
+    - name: DOCKER_LOGIN_COMMAND
+      prompt: "Enter your Docker login command"
+      private: yes
+    - name: DOCKER_REGISTRY_PRIVATE_URL
+      prompt: "Enter your Docker registry private URL"
+      private: no
+      default: "swr.cn-east-3.myhuaweicloud.com/dragon-e-tech-base"
+
+  tasks:
+    - name: Docker login
+      ansible.builtin.command: "{{ DOCKER_LOGIN_COMMAND }}"
+
+    - name: Pull Certbot image from Private Cloud
+      ansible.builtin.command: "docker pull {{ DOCKER_REGISTRY_PRIVATE_URL }}/certbot/certbot:latest"
+
+    - name: Rename (Tag) Certbot image to certbot:latest
+      ansible.builtin.command: "docker tag {{ DOCKER_REGISTRY_PRIVATE_URL }}/certbot/certbot:latest certbot/certbot:latest"
+
+    - name: Pull Nginx image from Public Cloud
+      ansible.builtin.command: "docker pull {{ DOCKER_REGISTRY_URL }}/nginx:latest"
+
+    - name: Rename (Tag) Nginx image to nginx:latest
+      ansible.builtin.command: "docker tag {{ DOCKER_REGISTRY_URL }}/nginx:latest nginx:latest"
+
+    - name: Remove old Certbot image
+      ansible.builtin.command: "docker rmi {{ DOCKER_REGISTRY_PRIVATE_URL }}/certbot/certbot:latest"
+      ignore_errors: true
+
+    - name: Remove old Nginx image
+      ansible.builtin.command: "docker rmi {{ DOCKER_REGISTRY_URL }}/nginx:latest"
+      ignore_errors: true
+
+    - name: Create directory for Nginx
+      file:
+        path: ~/nginx
+        state: directory
+
+    - name: Copy temporary Nginx config for challenge
+      copy:
+        dest: ~/nginx/nginx.conf
+        content: |
+          server {
+            listen 80;
+            listen [::]:80;
+
+            server_name {{ DNS_NAME }} www.{{ DNS_NAME }};
+            server_tokens off;
+
+            location /.well-known/acme-challenge/ {
+              root /var/www/certbot;
+            }
+
+            location / {
+              return 301 https://$host$request_uri;
+            }
+          }
+    - name: Copy docker-compose.yaml
+      copy:
+        src: ../files/docker-compose-nginx-auto-ssl.yaml
+        dest: ~/nginx/docker-compose.yaml
+
+    - name: Run nginx
+      community.docker.docker_compose_v2:
+        project_src: ~/nginx
+        services:
+          - nginx
+        state: present
+
+    - name: Wait for nginx to be ready
+      wait_for:
+        port: 80
+        host: "{{ ansible_host }}"
+        timeout: 60
+
+    - name: Run certbot for ACME challenge
+      community.docker.docker_compose_v2_run:
+        project_src: ~/nginx
+        service: certbot
+        command: >
+          certonly --webroot
+          --webroot-path /var/www/certbot/
+          --agree-tos
+          --no-eff-email
+          --email {{ ACCOUNT_EMAIL }}
+          -d {{ DNS_NAME }}
+        cleanup: true
+      async: 300
+      poll: 0
+      register: certbot_job
+
+    - name: Wait for certbot to complete
+      async_status:
+        jid: "{{ certbot_job.ansible_job_id }}"
+      register: certbot_result
+      until: certbot_result.finished
+      retries: 10
+      delay: 30
+
+    - name: Replace Nginx config with SSL-enabled version
+      template:
+        src: ../templates/nginx-https-auto-ssl.conf.j2
+        dest: ~/nginx/nginx.conf
+        mode: "0644"
+
+    # - name: Set correct permissions for the Certbot "live" directory
+    #   file:
+    #     path: ~/nginx/certbot/conf/live
+    #     state: directory
+    #     mode: "0755"
+
+    # - name: Set correct permissions for SSL certificate files
+    #   file:
+    #     path: ~/nginx/certbot/conf/live/{{ DNS_NAME }}
+    #     state: directory
+    #     mode: "0755"
+
+    # - name: Set correct permissions for all files in the SSL directory
+    #   file:
+    #     path: ~/nginx/certbot/conf/live/{{ DNS_NAME }}
+    #     state: directory
+    #     mode: "0644"
+    #     recurse: yes
+
+    - name: Restart nginx
+      community.docker.docker_compose_v2:
+        project_src: ~/nginx
+        services:
+          - nginx
+        state: restarted
+
+    - name: Wait for Nginx to be available on HTTPS
+      wait_for:
+        port: 443
+        host: "{{ ansible_host }}"
+        timeout: 60
+
+    - name: Wait for Nginx to become available
+      wait_for:
+        port: 80
+        host: "{{ ansible_host }}"
+        timeout: 60
+
+    - name: Setup Certbot auto-renewal cron job
+      cron:
+        name: "Auto renew SSL certificates"
+        job: "docker compose -f ~/nginx/docker-compose.yaml run certbot renew && docker compose -f ~/nginx/docker-compose.yaml exec nginx nginx -s reload"
+        minute: "0" # Run at the start of the hour
+        hour: "16" # Run at 4 PM UTC (midnight CST)
+        day: "1" # Run on the first day of the month
