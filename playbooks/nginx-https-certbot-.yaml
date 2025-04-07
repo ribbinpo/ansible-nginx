@@ -5,29 +5,20 @@
     - name: ACCOUNT_EMAIL
       prompt: "Enter your Let's Encrypt account email"
       private: no
-      default: ""
-    - name: DOCKER_LOGIN_COMMAND
-      prompt: "Enter your Docker login command"
-      private: yes
+      default: "admin@example.com"
+  
+  vars:
+    nginx_dir: ~/nginx
 
   tasks:
-    - name: Docker login
-      ansible.builtin.command: "{{ DOCKER_LOGIN_COMMAND }}"
-
-    - name: Pull Certbot image
-      ansible.builtin.command: "docker pull certbot/certbot:latest"
-
-    - name: Pull Nginx image
-      ansible.builtin.command: "docker pull nginx:latest"
-
     - name: Create directory for Nginx
       file:
-        path: ~/nginx
+        path: "{{ nginx_dir }}"
         state: directory
 
     - name: Copy temporary Nginx config for challenge
       copy:
-        dest: ~/nginx/nginx.conf
+        dest: "{{ nginx_dir }}/nginx.conf"
         content: |
           server {
             listen 80;
@@ -46,12 +37,12 @@
           }
     - name: Copy docker-compose.yaml
       copy:
-        src: ../files/docker-compose-nginx-auto-ssl.yaml
-        dest: ~/nginx/docker-compose.yaml
+        src: ../files/docker-compose-nginx-certbot.yaml
+        dest: "{{ nginx_dir }}/docker-compose.yaml"
 
     - name: Run nginx
       community.docker.docker_compose_v2:
-        project_src: ~/nginx
+        project_src: "{{ nginx_dir }}"
         services:
           - nginx
         state: present
@@ -64,7 +55,7 @@
 
     - name: Run certbot for ACME challenge
       community.docker.docker_compose_v2_run:
-        project_src: ~/nginx
+        project_src: "{{ nginx_dir }}"
         service: certbot
         command: >
           certonly --webroot
@@ -88,8 +79,8 @@
 
     - name: Replace Nginx config with SSL-enabled version
       template:
-        src: ../templates/nginx-https-auto-ssl.conf.j2
-        dest: ~/nginx/nginx.conf
+        src: ../templates/nginx-https-certbot.conf.j2
+        dest: "{{ nginx_dir }}/nginx.conf"
         mode: "0644"
 
     # - name: Set correct permissions for the Certbot "live" directory
@@ -113,7 +104,7 @@
 
     - name: Restart nginx
       community.docker.docker_compose_v2:
-        project_src: ~/nginx
+        project_src: "{{ nginx_dir }}"
         services:
           - nginx
         state: restarted
@@ -133,7 +124,7 @@
     - name: Setup Certbot auto-renewal cron job
       cron:
         name: "Auto renew SSL certificates"
-        job: "docker compose -f ~/nginx/docker-compose.yaml run certbot renew && docker compose -f ~/nginx/docker-compose.yaml exec nginx nginx -s reload"
+        job: "docker compose -f '{{ nginx_dir }}/docker-compose.yaml' run certbot renew && docker compose -f '{{ nginx_dir }}/docker-compose.yaml' exec nginx nginx -s reload"
         minute: "0" # Run at the start of the hour
         hour: "16" # Run at 4 PM UTC (midnight CST)
         day: "1" # Run on the first day of the month

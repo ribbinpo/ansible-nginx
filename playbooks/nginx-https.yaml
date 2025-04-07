@@ -1,37 +1,41 @@
 - name: Start Nginx container for https
   hosts: all
   become: yes
+
+  vars:
+    nginx_dir: ~/nginx
+
   tasks:
     - name: Create directory for Nginx
       file:
-        path: ~/nginx
+        path: "{{ nginx_dir }}"
         state: directory
     - name: Create directoy for Nginx SSL
       file:
-        path: ~/nginx/certs
+        path: "{{ nginx_dir }}/certs"
         state: directory
     - name: Copy certificate files
       copy:
         src: "{{ item }}"
-        dest: ~/nginx/certs/
+        dest: "{{ nginx_dir }}/certs/"
       with_fileglob:
         - ../files/ssl/*
     - name: Copy Docker Compose file
       copy:
         backup: true
         src: ../files/docker-compose-nginx.yaml
-        dest: ~/nginx/docker-compose.yml
+        dest: "{{ nginx_dir }}/docker-compose.yml"
     - name: Copy Nginx configuration file
       template:
         src: ../templates/nginx-https.conf.j2
-        dest: ~/nginx/nginx.conf
+        dest: "{{ nginx_dir }}/nginx.conf"
     - name: Tear down existing Nginx container
       community.docker.docker_compose_v2:
-        project_src: ~/nginx
+        project_src: "{{ nginx_dir }}"
         state: absent
     - name: Run Nginx container
       community.docker.docker_compose_v2:
-        project_src: ~/nginx
+        project_src: "{{ nginx_dir }}"
         state: present
       register: output
     - name: Show the result
