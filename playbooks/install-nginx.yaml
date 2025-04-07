@@ -1,0 +1,21 @@
+- name: Start Nginx container for HTTPS with Let's Encrypt
+  hosts: all
+  become: yes
+  vars_prompt:
+    - name: DOCKER_USERNAME
+      prompt: "Enter your Docker username"
+      private: yes
+    - name: DOCKER_PASSWORD
+      prompt: "Enter your Docker password"
+      private: yes
+    - name: DOCKER_REGISTRY_URL
+      prompt: "Enter your Docker registry URL"
+      private: no
+      default: "docker.io/library"
+
+  tasks:
+    - name: Docker login
+      ansible.builtin.command: "docker login -u {{ DOCKER_USERNAME }} -p {{ DOCKER_PASSWORD }} {{ DOCKER_REGISTRY_URL }}"
+
+    - name: Pull Nginx image
+      ansible.builtin.command: "docker pull {{ DOCKER_REGISTRY_URL }}/nginx:latest"
